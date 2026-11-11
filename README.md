@@ -13,6 +13,24 @@ Contraband attributes every outbound connection on your machine to the process
 tree, package and domain behind it, scores suspicious install behaviour, and
 keeps a tamper-evident log. Nothing leaves the machine and no traffic is decrypted.
 
+## How it works
+
+```mermaid
+flowchart LR
+  subgraph Sensors
+    L[Linux: eBPF probes]
+    M[macOS: eslogger + tcpdump pktap]
+  end
+  L & M -->|exec, open, connect, DNS| C[Correlator<br/>process tree, package, domain]
+  C --> S[Scoring<br/>rules + profiles]
+  P[Approved policy<br/>root-owned, password to widen] --> S
+  S --> G[(Hash-chained log)]
+  S --> A[Alerts: terminal, notifications, watch]
+  S -->|risk / strict| K[Stop offending process]
+  CLI[contraband run / watch / show / allow] <-->|unix socket, peer creds| D[Root daemon]
+  D --- C
+```
+
 ## Status
 
 Early development, monitor mode only: nothing is blocked yet.
