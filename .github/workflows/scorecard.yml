@@ -10,8 +10,12 @@ permissions: read-all
 
 jobs:
   analysis:
+    # Scorecard publishes results, which GitHub allows only for public repositories.
+    if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-24.04
     permissions:
+      contents: read
+      actions: read
       security-events: write
       id-token: write
     steps:
