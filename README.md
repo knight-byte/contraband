@@ -60,6 +60,42 @@ log    0      (command)  registry.npmjs.org
 foo: sensitive file read, then outbound connection; install script made a non-registry connection; ...
 ```
 
+### Example: a credential-stealing install script
+
+```sh
+mkdir -p ~/.aws /tmp/app/node_modules/evil_package && touch ~/.aws/credentials-test
+cd /tmp/app
+contraband run -- bash -c 'cd node_modules/evil_package && cat ~/.aws/credentials-test && curl -s -m3 http://1.1.1.1/ -o /dev/null'
+```
+
+```
+contraband: ALERT evil_package (score 13): read ~/.aws/credentials-test, ran curl, sent to 1.1.1.1
+
+contraband: 1 package needs review (session 77604cd586badc99)
+
+  ALERT 13  evil_package
+            read     ~/.aws/credentials-test
+            ran      curl
+            sent to  1.1.1.1 (raw IP)
+
+  inspect:      contraband show 77604cd586badc99
+  if expected:  contraband allow -package evil_package 1.1.1.1
+```
+
+A normal install:
+
+```
+$ contraband run -- npm install esbuild
+contraband: ✓ no issues (session 31d0a8fed6b3e6d6)
+  ✓         npm  registry.npmjs.org
+```
+
+Stop it instead of only reporting:
+
+```sh
+contraband run -enforce strict -- npm install
+```
+
 ### Policy
 
 `.contraband.yml` lists the destinations a project is expected to reach:
