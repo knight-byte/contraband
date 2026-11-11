@@ -1,0 +1,6 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Recorded test events contain fake addresses, not secrets"
+paths = ['''^testdata/''']
