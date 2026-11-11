@@ -1,0 +1,6 @@
+# Destinations this repository is expected to reach. Anything else is reported.
+version: 1
+allow:
+  - domain: proxy.golang.org
+  - domain: sum.golang.org
+  - domain: "*.github.com"
