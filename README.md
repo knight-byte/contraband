@@ -101,6 +101,28 @@ Only the offending process and its children are stopped; on macOS its first
 packet has already left by then. AI agents' own traffic is never compared with
 their previous run, since research differs every time.
 
+### Profiles
+
+Give different programs or projects their own rules in the root-owned rules
+file. The first match wins; programs and directories are each optional.
+
+```yaml
+profiles:
+  - name: claude-research
+    programs: [claude]
+    enforce: risk
+    research: true
+    allow: [docs.python.org, "*.github.com"]
+  - name: payments-api
+    programs: [node]
+    directories: [/Users/you/work/payments]
+    enforce: strict
+    allow: [api.stripe.com]
+```
+
+The daemon raises a health alert when the rules file changed since its last
+start, since anything with cached `sudo` rights could edit it.
+
 ### Detection rules
 
 Registries, suspicious domains and sensitive paths ship in

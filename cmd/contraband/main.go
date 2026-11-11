@@ -191,6 +191,10 @@ func runSession(ctx context.Context, client *daemon.Client, argv []string, enfor
 	if err != nil {
 		return 1, err
 	}
+	if session.Profile != "" || session.Enforce != "" {
+		out := styleFor(os.Stderr)
+		fmt.Fprintf(os.Stderr, "contraband: %s\n", out.dim(describeSession(session.Profile, session.Enforce)))
+	}
 	if session.PolicyPending {
 		out := styleFor(os.Stderr)
 		fmt.Fprintf(os.Stderr, "contraband: %s\n", out.warn(policy.FileName+" has unapproved changes; run `contraband approve` to apply them"))
@@ -350,6 +354,9 @@ func show(ctx context.Context, client *daemon.Client, id string) error {
 	}
 	out := styleFor(os.Stdout)
 	fmt.Fprintf(os.Stdout, "%s %s\n", out.paint(ansiBold, "session "+id), out.dim(session.Cwd))
+	if session.Profile != "" {
+		fmt.Fprintf(os.Stdout, "  %s\n", out.dim("profile "+session.Profile))
+	}
 	fmt.Fprintf(os.Stdout, "  %s\n", session.Command)
 	if session.Packages != nil {
 		printSummary(os.Stdout, id, commandName(session.Command), daemon.EndResponse{Packages: session.Packages})
@@ -362,6 +369,17 @@ func show(ctx context.Context, client *daemon.Client, id string) error {
 		fmt.Fprintf(os.Stdout, "  %s  %s\n", formatFlow(out, flow), out.dim(strings.Join(chainNames(flow.Chain), out.from())))
 	}
 	return nil
+}
+
+func describeSession(profile, enforce string) string {
+	parts := []string{}
+	if profile != "" {
+		parts = append(parts, "profile "+profile)
+	}
+	if enforce != "" {
+		parts = append(parts, "enforce "+enforce)
+	}
+	return strings.Join(parts, ", ")
 }
 
 func chainNames(chain []string) []string {

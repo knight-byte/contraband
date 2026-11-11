@@ -120,14 +120,17 @@ auto_sessions:
   - python
   - python3
 
-# AI agents fetch arbitrary pages while researching, so their own traffic is
-# not compared with the previous run; packages they install still are.
-agents:
-  - claude
-  - codex
-  - gemini
-  - aider
-  - cursor-agent
+# Profiles give matching sessions their own rules. The first match wins; a
+# profile matches when its programs and directories (each optional) match.
+#   enforce   off | risk | strict for this session (see below)
+#   research  do not flag destinations new since the last run
+#   allow     hosts or IPs allowed in addition to the project's approved
+#             policy; * matches within one label, e.g. "*.github.com"
+# Profiles in the root-owned rules file come before these.
+profiles:
+  - name: ai-agents
+    programs: [claude, codex, gemini, aider, cursor-agent]
+    research: true
 
 # Enforcement for automatic sessions:
 #   off     monitor only

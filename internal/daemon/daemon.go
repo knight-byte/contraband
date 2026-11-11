@@ -115,6 +115,9 @@ func Run(ctx context.Context, config Config) error {
 		}
 	}()
 	go func() { errs <- server.Serve(listener) }()
+	if err := daemon.checkRules(ctx); err != nil {
+		return err
+	}
 	daemon.correlator.OnAutoSession(func(evt event.Event) *correlate.Session { return daemon.startAuto(ctx, evt) })
 	go daemon.consume(ctx, events)
 
@@ -212,7 +215,9 @@ type StartRequest struct {
 }
 
 type StartResponse struct {
-	ID string `json:"id"`
+	ID      string `json:"id"`
+	Profile string `json:"profile,omitempty"`
+	Enforce string `json:"enforce,omitempty"`
 	// PolicyPending is set when the repository's policy file differs from
 	// the approved one; only the approved one is enforced.
 	PolicyPending bool `json:"policy_pending"`
@@ -229,6 +234,7 @@ type ApproveRequest struct {
 }
 
 type ShowResponse struct {
+	Profile  string                     `json:"profile,omitempty"`
 	Command  string                     `json:"command"`
 	Cwd      string                     `json:"cwd"`
 	Started  time.Time                  `json:"started"`
@@ -246,6 +252,7 @@ type EndRequest struct {
 	PolicyHash string `json:"policy_hash"`
 	Auto       bool   `json:"auto,omitempty"`
 	Enforce    string `json:"enforce,omitempty"`
+	Profile    string `json:"profile,omitempty"`
 }
 
 type EndResponse struct {
@@ -267,6 +274,7 @@ type sessionStart struct {
 	PolicyHash string `json:"policy_hash"`
 	Auto       bool   `json:"auto,omitempty"`
 	Enforce    string `json:"enforce,omitempty"`
+	Profile    string `json:"profile,omitempty"`
 }
 
 func (daemon *Daemon) routes() http.Handler {
@@ -317,7 +325,12 @@ func (daemon *Daemon) startSession(writer http.ResponseWriter, request *http.Req
 		httpError(writer, http.StatusInternalServerError, err)
 		return
 	}
-	start := sessionStart{ID: id, UID: caller.UID, RootPID: caller.PID, Command: body.Command, Cwd: body.Cwd, PolicyHash: approved.Hash, Enforce: body.Enforce}
+	fields := strings.Fields(body.Command)
+	settings := daemon.settingsFor("", fields, body.Cwd, approved, "", body.Enforce)
+	start := sessionStart{
+		ID: id, UID: caller.UID, RootPID: caller.PID, Command: body.Command, Cwd: body.Cwd,
+		PolicyHash: approved.Hash, Enforce: settings.enforce, Profile: settings.profile,
+	}
 	if err := daemon.store.Append(ctx, store.KindSessionStart, id, start); err != nil {
 		httpError(writer, http.StatusInternalServerError, err)
 		return
@@ -327,12 +340,12 @@ func (daemon *Daemon) startSession(writer http.ResponseWriter, request *http.Req
 	daemon.sessions[id] = openSession{uid: caller.UID, proposalHash: policy.Hash(body.Policy)}
 	daemon.correlator.StartSession(&correlate.Session{
 		ID: id, RootPID: caller.PID, UID: caller.UID, Command: body.Command, Cwd: body.Cwd,
-		Policy: approved, Baseline: baseline, Enforce: body.Enforce,
-		Agent: daemon.config.Rules.IsAgent(commandName(body.Command), nil),
+		Policy: settings.policy, Baseline: baseline, Enforce: settings.enforce,
+		Agent: settings.research, Profile: settings.profile,
 	})
 	daemon.mu.Unlock()
 	pending := len(body.Policy) > 0 && policy.Hash(body.Policy) != policy.Hash(approvedContent)
-	writeJSON(writer, StartResponse{ID: id, PolicyPending: pending})
+	writeJSON(writer, StartResponse{ID: id, Profile: settings.profile, Enforce: settings.enforce, PolicyPending: pending})
 }
 
 func (daemon *Daemon) endSession(writer http.ResponseWriter, request *http.Request) {
@@ -406,7 +419,7 @@ func (daemon *Daemon) show(writer http.ResponseWriter, request *http.Request) {
 		httpError(writer, http.StatusInternalServerError, err)
 		return
 	}
-	response := ShowResponse{Command: start.Command, Cwd: start.Cwd, Flows: flows}
+	response := ShowResponse{Profile: start.Profile, Command: start.Command, Cwd: start.Cwd, Flows: flows}
 	if ends, err := daemon.store.Bodies(ctx, id, store.KindSessionEnd); err == nil && len(ends) > 0 {
 		var end EndResponse
 		if json.Unmarshal(ends[0], &end) == nil {

@@ -41,8 +41,11 @@ func (daemon *Daemon) startAuto(ctx context.Context, evt event.Event) *correlate
 	if err := daemon.config.Sensor.Track(evt.PID); err != nil {
 		daemon.config.Log.Warn("track automatic session", "pid", evt.PID, "err", err)
 	}
-	enforce := score.Stronger("", daemon.config.Rules.EnforceAuto)
-	start := sessionStart{ID: id, UID: evt.UID, RootPID: evt.PID, Command: command, Cwd: evt.Cwd, PolicyHash: approved.Hash, Auto: true, Enforce: enforce}
+	settings := daemon.settingsFor(evt.Exe, evt.Args, evt.Cwd, approved, daemon.config.Rules.EnforceAuto, "")
+	start := sessionStart{
+		ID: id, UID: evt.UID, RootPID: evt.PID, Command: command, Cwd: evt.Cwd,
+		PolicyHash: approved.Hash, Auto: true, Enforce: settings.enforce, Profile: settings.profile,
+	}
 	if err := daemon.store.Append(ctx, store.KindSessionStart, id, start); err != nil {
 		daemon.config.Log.Error("automatic session", "err", err)
 		return nil
@@ -50,8 +53,8 @@ func (daemon *Daemon) startAuto(ctx context.Context, evt event.Event) *correlate
 	daemon.autoSessions[id] = true
 	return &correlate.Session{
 		ID: id, RootPID: evt.PID, UID: evt.UID, Command: command, Cwd: evt.Cwd,
-		Policy: approved, Baseline: baseline, Enforce: enforce, Auto: true,
-		Agent: daemon.config.Rules.IsAgent(evt.Exe, evt.Args),
+		Policy: settings.policy, Baseline: baseline, Enforce: settings.enforce, Auto: true,
+		Agent: settings.research, Profile: settings.profile,
 	}
 }
 

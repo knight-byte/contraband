@@ -2,7 +2,9 @@ package score
 
 import (
 	"bytes"
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -81,8 +83,41 @@ type Rules struct {
 	Shells           []string            `yaml:"shells"`
 	CredentialOwners map[string][]string `yaml:"credential_owners"`
 	AutoSessions     []string            `yaml:"auto_sessions"`
-	Agents           []string            `yaml:"agents"`
+	Profiles         []Profile           `yaml:"profiles"`
 	EnforceAuto      string              `yaml:"enforce_auto_sessions"`
+	// Hash identifies the extra rules file that was loaded, so changes
+	// between daemon starts can be reported.
+	Hash string `yaml:"-"`
+}
+
+type Profile struct {
+	Name        string   `yaml:"name"`
+	Programs    []string `yaml:"programs"`
+	Directories []string `yaml:"directories"`
+	Enforce     string   `yaml:"enforce"`
+	Research    bool     `yaml:"research"`
+	Allow       []string `yaml:"allow"`
+}
+
+// ProfileFor returns the first profile matching the program and working
+// directory, or nil.
+func (rules *Rules) ProfileFor(exe string, args []string, cwd string) *Profile {
+	for index := range rules.Profiles {
+		profile := &rules.Profiles[index]
+		if len(profile.Programs) > 0 && !invokedAs(profile.Programs, exe, args) {
+			continue
+		}
+		if len(profile.Directories) > 0 && !slices.ContainsFunc(profile.Directories, func(dir string) bool { return within(cwd, dir) }) {
+			continue
+		}
+		return profile
+	}
+	return nil
+}
+
+func within(cwd, dir string) bool {
+	dir = strings.TrimSuffix(dir, "/")
+	return cwd == dir || strings.HasPrefix(cwd, dir+"/")
 }
 
 const (
@@ -150,7 +185,9 @@ func LoadRules(extraPath string) (*Rules, error) {
 		rules.CredentialOwners[tool] = append(rules.CredentialOwners[tool], paths...)
 	}
 	rules.AutoSessions = append(rules.AutoSessions, extra.AutoSessions...)
-	rules.Agents = append(rules.Agents, extra.Agents...)
+	rules.Profiles = append(extra.Profiles, rules.Profiles...)
+	sum := sha256.Sum256(content)
+	rules.Hash = hex.EncodeToString(sum[:])
 	if extra.EnforceAuto != "" {
 		rules.EnforceAuto = extra.EnforceAuto
 	}
@@ -171,6 +208,23 @@ func parseRules(content []byte) (*Rules, error) {
 	}
 	if !ValidEnforce(rules.EnforceAuto) {
 		return nil, fmt.Errorf("enforce_auto_sessions %q: want off, risk or strict", rules.EnforceAuto)
+	}
+	names := map[string]bool{}
+	for _, profile := range rules.Profiles {
+		switch {
+		case profile.Name == "" || names[profile.Name]:
+			return nil, fmt.Errorf("profile %q: names must be set and unique", profile.Name)
+		case len(profile.Programs) == 0 && len(profile.Directories) == 0:
+			return nil, fmt.Errorf("profile %q: set programs, directories or both", profile.Name)
+		case !ValidEnforce(profile.Enforce):
+			return nil, fmt.Errorf("profile %q: enforce %q: want off, risk or strict", profile.Name, profile.Enforce)
+		}
+		names[profile.Name] = true
+		for _, host := range profile.Allow {
+			if _, err := path.Match(host, ""); err != nil {
+				return nil, fmt.Errorf("profile %q: allow %q: %w", profile.Name, host, err)
+			}
+		}
 	}
 	return rules, nil
 }
@@ -242,10 +296,6 @@ func InvokedNames(exe string, args []string) []string {
 // IsAutoSession reports whether a program should start a session by itself.
 func (rules *Rules) IsAutoSession(exe string, args []string) bool {
 	return invokedAs(rules.AutoSessions, exe, args)
-}
-
-func (rules *Rules) IsAgent(exe string, args []string) bool {
-	return invokedAs(rules.Agents, exe, args)
 }
 
 func invokedAs(list []string, exe string, args []string) bool {

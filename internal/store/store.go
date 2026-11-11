@@ -23,6 +23,7 @@ const (
 	KindSessionStart   = "session_start"
 	KindSessionEnd     = "session_end"
 	KindPolicyApproved = "policy_approved"
+	KindRulesLoaded    = "rules_loaded"
 )
 
 var ErrBrokenChain = errors.New("hash chain broken")
@@ -186,6 +187,19 @@ func (store *Store) Bodies(ctx context.Context, session, kind string) ([]json.Ra
 		return nil, fmt.Errorf("read %s: %w", kind, err)
 	}
 	return bodies, nil
+}
+
+// Latest returns the body of the newest record of kind, or nil.
+func (store *Store) Latest(ctx context.Context, kind string) (json.RawMessage, error) {
+	var body []byte
+	err := store.db.QueryRowContext(ctx, `SELECT body FROM log WHERE kind = ? ORDER BY seq DESC LIMIT 1`, kind).Scan(&body)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("latest %s: %w", kind, err)
+	}
+	return body, nil
 }
 
 // PreviousSession returns the latest earlier session of the same uid that ran

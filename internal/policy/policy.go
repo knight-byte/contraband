@@ -183,3 +183,13 @@ func RemoveRule(content []byte, rule Rule) ([]byte, bool, error) {
 	}
 	return out.Bytes(), true, nil
 }
+
+// With returns a copy that also allows hosts for any package, keeping the
+// original's hash: the extra hosts come from root-owned rules, not the file.
+func (policy *Policy) With(hosts []string) *Policy {
+	merged := &Policy{Version: 1, Hash: policy.Hash, Allow: slices.Clone(policy.Allow)}
+	for _, host := range hosts {
+		merged.Allow = append(merged.Allow, Rule{Domain: host})
+	}
+	return merged
+}

@@ -53,9 +53,11 @@ type Session struct {
 	// process once its session reaches ALERT, strict also stops any process
 	// that connects anywhere not approved, not a registry and not local.
 	Enforce string
-	// Agent marks sessions of AI agents, whose own research traffic is not
+	// Agent marks sessions whose own traffic is research and is not
 	// compared with the previous run.
 	Agent bool
+	// Profile names the rules profile the session runs under, if any.
+	Profile string
 	// Auto marks sessions the daemon started itself; they end when their
 	// root process exits instead of when a client says so.
 	Auto bool

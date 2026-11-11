@@ -69,3 +69,33 @@ func TestIsCredentialRead(t *testing.T) {
 		}
 	}
 }
+
+func TestProfileFor(t *testing.T) {
+	rules := score.DefaultRules()
+	rules.Profiles = append([]score.Profile{
+		{Name: "payments", Programs: []string{"node"}, Directories: []string{"/work/payments"}, Enforce: score.EnforceStrict},
+		{Name: "any-in-sandbox", Directories: []string{"/work/sandbox"}},
+	}, rules.Profiles...)
+	tests := []struct {
+		name string
+		exe  string
+		args []string
+		cwd  string
+		want string
+	}{
+		{"node in payments", "/usr/bin/node", []string{"node", "server.js"}, "/work/payments/api", "payments"},
+		{"node elsewhere", "/usr/bin/node", []string{"node", "server.js"}, "/work/other", ""},
+		{"directory prefix is not a path prefix", "/usr/bin/node", []string{"node"}, "/work/payments-old", ""},
+		{"anything in sandbox", "/usr/bin/python3", []string{"python3"}, "/work/sandbox", "any-in-sandbox"},
+		{"claude uses the default agents profile", "/opt/claude/2.1", []string{"claude"}, "/work/other", "ai-agents"},
+	}
+	for _, tc := range tests {
+		got := ""
+		if profile := rules.ProfileFor(tc.exe, tc.args, tc.cwd); profile != nil {
+			got = profile.Name
+		}
+		if got != tc.want {
+			t.Errorf("%s: profile %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
