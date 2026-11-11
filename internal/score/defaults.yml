@@ -63,6 +63,28 @@ sensitive_names:
   - id_ed25519*
   - "*.pem"
 
+# A tool reading its own credentials is normal: ssh reading ~/.ssh during a
+# git push, gh reading its token. Reads by anything else still count.
+credential_owners:
+  ssh: [/.ssh/]
+  scp: [/.ssh/]
+  sftp: [/.ssh/]
+  ssh-add: [/.ssh/]
+  git: [/.git-credentials, /.ssh/]
+  git-remote-https: [/.git-credentials, /.netrc]
+  gh: [/.config/gh/]
+  aws: [/.aws/]
+  gcloud: [/.config/gcloud/]
+  az: [/.azure/]
+  docker: [/.docker/config.json]
+  kubectl: [/.kube/config]
+  npm: [/.npmrc]
+  pnpm: [/.npmrc]
+  yarn: [/.npmrc]
+  pip: [/.pypirc, /.netrc]
+  twine: [/.pypirc]
+  gpg: [/.gnupg/]
+
 downloaders:
   - curl
   - wget
@@ -91,6 +113,8 @@ auto_sessions:
   - bundle
   - composer
   - go
+  - git
+  - gh
   - claude
   - node
   - python

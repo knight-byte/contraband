@@ -73,15 +73,16 @@ func (card *Card) Add(signal Signal) bool {
 var defaultRules []byte
 
 type Rules struct {
-	Registries     []string `yaml:"registries"`
-	Suspicious     []string `yaml:"suspicious_domains"`
-	SensitivePaths []string `yaml:"sensitive_paths"`
-	SensitiveNames []string `yaml:"sensitive_names"`
-	Downloaders    []string `yaml:"downloaders"`
-	Shells         []string `yaml:"shells"`
-	AutoSessions   []string `yaml:"auto_sessions"`
-	Agents         []string `yaml:"agents"`
-	EnforceAuto    string   `yaml:"enforce_auto_sessions"`
+	Registries       []string            `yaml:"registries"`
+	Suspicious       []string            `yaml:"suspicious_domains"`
+	SensitivePaths   []string            `yaml:"sensitive_paths"`
+	SensitiveNames   []string            `yaml:"sensitive_names"`
+	Downloaders      []string            `yaml:"downloaders"`
+	Shells           []string            `yaml:"shells"`
+	CredentialOwners map[string][]string `yaml:"credential_owners"`
+	AutoSessions     []string            `yaml:"auto_sessions"`
+	Agents           []string            `yaml:"agents"`
+	EnforceAuto      string              `yaml:"enforce_auto_sessions"`
 }
 
 const (
@@ -145,6 +146,9 @@ func LoadRules(extraPath string) (*Rules, error) {
 	rules.SensitiveNames = append(rules.SensitiveNames, extra.SensitiveNames...)
 	rules.Downloaders = append(rules.Downloaders, extra.Downloaders...)
 	rules.Shells = append(rules.Shells, extra.Shells...)
+	for tool, paths := range extra.CredentialOwners {
+		rules.CredentialOwners[tool] = append(rules.CredentialOwners[tool], paths...)
+	}
 	rules.AutoSessions = append(rules.AutoSessions, extra.AutoSessions...)
 	rules.Agents = append(rules.Agents, extra.Agents...)
 	if extra.EnforceAuto != "" {
@@ -207,6 +211,34 @@ func (rules *Rules) IsDownloader(exe string, args []string) bool {
 	return slices.Contains(rules.Shells, invokedAs) && slices.Contains(args, "-c")
 }
 
+// IsCredentialRead reports whether a read of filePath by a process invoked as
+// names is a sensitive read: the path is sensitive and the process is not the
+// tool that owns that credential.
+func (rules *Rules) IsCredentialRead(names []string, filePath string) bool {
+	if !rules.IsSensitive(filePath) {
+		return false
+	}
+	for _, name := range names {
+		for _, fragment := range rules.CredentialOwners[name] {
+			if strings.Contains(filePath, fragment) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// InvokedNames returns the names a program can be recognised by: the
+// executable and the first three argv entries, since scripts run through an
+// interpreter or env (npm is "env node .../npm").
+func InvokedNames(exe string, args []string) []string {
+	names := []string{path.Base(exe)}
+	for index := 0; index < len(args) && index < 3; index++ {
+		names = append(names, path.Base(args[index]))
+	}
+	return names
+}
+
 // IsAutoSession reports whether a program should start a session by itself.
 func (rules *Rules) IsAutoSession(exe string, args []string) bool {
 	return invokedAs(rules.AutoSessions, exe, args)
@@ -216,14 +248,9 @@ func (rules *Rules) IsAgent(exe string, args []string) bool {
 	return invokedAs(rules.Agents, exe, args)
 }
 
-// invokedAs matches the executable and the first three argv entries, since
-// scripts run through an interpreter or env (npm is "env node .../npm").
 func invokedAs(list []string, exe string, args []string) bool {
-	if slices.Contains(list, path.Base(exe)) {
-		return true
-	}
-	for index := 0; index < len(args) && index < 3; index++ {
-		if slices.Contains(list, path.Base(args[index])) {
+	for _, name := range InvokedNames(exe, args) {
+		if slices.Contains(list, name) {
 			return true
 		}
 	}

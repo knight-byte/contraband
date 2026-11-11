@@ -47,3 +47,25 @@ func TestIsAutoSession(t *testing.T) {
 		}
 	}
 }
+
+func TestIsCredentialRead(t *testing.T) {
+	rules := score.DefaultRules()
+	tests := []struct {
+		name  string
+		names []string
+		path  string
+		want  bool
+	}{
+		{"ssh reads its key during git push", []string{"ssh", "ssh"}, "/Users/dev/.ssh/id_ed25519", false},
+		{"gh reads its token", []string{"gh"}, "/Users/dev/.config/gh/hosts.yml", false},
+		{"git hook cats the ssh key", []string{"cat", "cat"}, "/Users/dev/.ssh/id_ed25519", true},
+		{"gh reading aws credentials", []string{"gh"}, "/Users/dev/.aws/credentials", true},
+		{"npm reads npmrc as node", []string{"node", "node", "npm"}, "/Users/dev/.npmrc", false},
+		{"ordinary file", []string{"cat"}, "/Users/dev/notes.txt", false},
+	}
+	for _, tc := range tests {
+		if got := rules.IsCredentialRead(tc.names, tc.path); got != tc.want {
+			t.Errorf("%s: IsCredentialRead = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}

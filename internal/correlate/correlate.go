@@ -183,6 +183,7 @@ type process struct {
 	parentPID uint32
 	uid       uint32
 	exe       string
+	names     []string
 	session   *Session
 	pkg       string
 	exited    time.Time
@@ -267,7 +268,7 @@ func (correlator *Correlator) Handle(evt event.Event) Result {
 	case event.DNS:
 		correlator.learnName(evt)
 	case event.Open:
-		if proc := correlator.processes[evt.PID]; proc != nil && proc.session != nil && correlator.rules.IsSensitive(evt.Path) {
+		if proc := correlator.processes[evt.PID]; proc != nil && proc.session != nil && correlator.rules.IsCredentialRead(proc.names, evt.Path) {
 			proc.session.evidenceFor(proc.pkg).addRead(evt.Path)
 		}
 	case event.Connect:
@@ -379,6 +380,7 @@ func (correlator *Correlator) exec(evt event.Event) []event.Alert {
 		correlator.processes[evt.PID] = proc
 	}
 	proc.uid, proc.exe = evt.UID, evt.Exe
+	proc.names = score.InvokedNames(evt.Exe, evt.Args)
 	if evt.PPID != 0 {
 		proc.parentPID = evt.PPID
 	}
