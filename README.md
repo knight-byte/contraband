@@ -1,5 +1,12 @@
 # Contraband
 
+[![ci](https://github.com/knight-byte/contraband/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/knight-byte/contraband/actions/workflows/ci.yml)
+[![security](https://github.com/knight-byte/contraband/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/knight-byte/contraband/actions/workflows/security.yml)
+[![codeql](https://github.com/knight-byte/contraband/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/knight-byte/contraband/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/knight-byte/contraband/badge)](https://securityscorecards.dev/viewer/?uri=github.com/knight-byte/contraband)
+[![Go](https://img.shields.io/badge/go-1.27-00ADD8?logo=go&logoColor=white)](go.mod)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+
 Know what your dev tools, package installs and AI agents talk to.
 
 Contraband attributes every outbound connection on your machine to the process
