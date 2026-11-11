@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Scans the commits being pushed for secrets and refuses the push if any are
+# found. Enable once per clone with: make hooks
+set -euo pipefail
+
+zero=0000000000000000000000000000000000000000
+root=$(git rev-parse --show-toplevel)
+remote_name=$1
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$local_sha" = "$zero" ] && continue # branch deletion
+  if [ "$remote_sha" = "$zero" ]; then
+    range="$local_sha --not --remotes=$remote_name" # new branch: commits the remote lacks
+  else
+    range="$remote_sha..$local_sha"
+  fi
+  if ! (cd "$root" && go tool -modfile=tools/go.mod gitleaks git --redact --no-banner --log-opts="$range" .); then
+    echo "pre-push: possible secret in $local_ref; push refused." >&2
+    echo "pre-push: remove it from history, or mark a false positive with a gitleaks:allow comment." >&2
+    exit 1
+  fi
+done

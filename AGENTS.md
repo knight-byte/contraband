@@ -86,3 +86,5 @@ tools/                   separate module pinning dev tools (go tool -modfile=too
   gitleaks, license check. Linux-only code is linted with `GOOS=linux`.
 - After editing BPF C, run `make generate` and commit the regenerated objects.
 - Commits follow Conventional Commits (`feat:`, `fix:`, `chore:` …).
+- Run `make hooks` once per clone; the pre-push hook scans outgoing commits
+  with gitleaks. Never bypass it with `--no-verify`.

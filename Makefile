@@ -5,7 +5,7 @@ VM       := contraband
 LICENSES := Apache-2.0,MIT,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0
 LDFLAGS  := -s -w
 
-.PHONY: check fmt lint vuln osv secrets licenses test build generate vm test-linux
+.PHONY: check fmt lint vuln osv secrets licenses test build generate vm test-linux hooks
 
 check: lint test vuln osv secrets licenses
 
@@ -31,6 +31,10 @@ secrets:
 
 licenses:
 	GOOS=linux $(call hosttool,go-licenses) check ./... --allowed_licenses=$(LICENSES)
+
+# Scan pushed commits for secrets before they leave the machine.
+hooks:
+	git config core.hooksPath .githooks
 
 build:
 	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o bin/contraband ./cmd/contraband

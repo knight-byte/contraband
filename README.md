@@ -108,6 +108,7 @@ Requires Go 1.27. Linux sensor work happens in a Lima VM on macOS.
 make check        # lint, tests, govulncheck, osv-scanner, gitleaks, licenses
 make generate     # rebuild BPF objects (in the VM)
 make test-linux   # load the probes and run the end-to-end test (in the VM)
+make hooks        # once per clone: refuse pushes that contain secrets
 ```
 
 ### Trying it on macOS
