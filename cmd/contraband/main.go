@@ -27,7 +27,10 @@ const usage = `Usage: contraband <command> [flags]
 
 Commands:
   daemon              run the privileged monitoring daemon
-  run -- <cmd> ...    run a command and audit its network activity
+  run [-enforce risk|strict] -- <cmd> ...
+                      run a command and audit its network activity;
+                      risk stops a process at ALERT, strict also stops
+                      connections that are not approved
   watch               stream your connections live
   show <session>      what a session did: evidence and every connection
   allow [-package p] <host>
@@ -75,13 +78,17 @@ func run(ctx context.Context, args []string) (int, error) {
 		}
 		return 0, runDaemon(ctx, *socket, *db, *rulesPath, *replayPath, level)
 	case "run":
+		enforce := flags.String("enforce", "", "risk: stop a process once the session reaches ALERT; strict: also stop any connection that is not approved, a registry or local")
 		if err := flags.Parse(args); err != nil {
 			return 2, nil
 		}
 		if flags.NArg() == 0 {
 			return 2, errors.New("run: missing command, e.g. contraband run -- npm install")
 		}
-		return runSession(ctx, daemon.NewClient(*socket), flags.Args())
+		if !score.ValidEnforce(*enforce) {
+			return 2, errors.New("run: -enforce must be risk or strict")
+		}
+		return runSession(ctx, daemon.NewClient(*socket), flags.Args(), *enforce)
 	case "watch":
 		if err := flags.Parse(args); err != nil {
 			return 2, nil
@@ -171,7 +178,7 @@ func runDaemon(ctx context.Context, socket, db, rulesPath, replayPath string, le
 	return daemon.Run(ctx, daemon.Config{Socket: socket, DB: db, Sensor: sensor, Rules: rules, Log: logger})
 }
 
-func runSession(ctx context.Context, client *daemon.Client, argv []string) (int, error) {
+func runSession(ctx context.Context, client *daemon.Client, argv []string, enforce string) (int, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return 1, err
@@ -180,7 +187,7 @@ func runSession(ctx context.Context, client *daemon.Client, argv []string) (int,
 	if err != nil {
 		return 1, err
 	}
-	session, err := client.StartSession(ctx, daemon.StartRequest{Command: strings.Join(argv, " "), Cwd: cwd, Policy: policyBytes})
+	session, err := client.StartSession(ctx, daemon.StartRequest{Command: strings.Join(argv, " "), Cwd: cwd, Policy: policyBytes, Enforce: enforce})
 	if err != nil {
 		return 1, err
 	}

@@ -23,7 +23,20 @@ const (
 	// Sensors can report a process's last connections after its exit, so
 	// exited processes are kept this long.
 	exitRetention = 30 * time.Second
+	// An automatic session closes this long after its root process exits,
+	// once late sensor events have arrived.
+	autoEndDelay = 3 * time.Second
 )
+
+// Result is everything one event caused.
+type Result struct {
+	Flow   *event.Flow
+	Alerts []event.Alert
+	// Kill lists processes to stop because an enforced session broke its policy.
+	Kill []uint32
+	// Ended lists automatic sessions whose root process has exited.
+	Ended []*Session
+}
 
 type Session struct {
 	ID      string
@@ -36,10 +49,21 @@ type Session struct {
 	// same command. Only packages present in it are compared, so a new
 	// dependency or an empty previous run raises nothing.
 	Baseline map[string]map[string]bool
+	// Enforce is an enforcement mode from the score package: risk stops a
+	// process once its session reaches ALERT, strict also stops any process
+	// that connects anywhere not approved, not a registry and not local.
+	Enforce string
+	// Agent marks sessions of AI agents, whose own research traffic is not
+	// compared with the previous run.
+	Agent bool
+	// Auto marks sessions the daemon started itself; they end when their
+	// root process exits instead of when a client says so.
+	Auto bool
 
-	cards    map[string]*score.Card
-	evidence map[string]*Evidence
-	alerted  map[string]score.Level
+	rootExited time.Time
+	cards      map[string]*score.Card
+	evidence   map[string]*Evidence
+	alerted    map[string]score.Level
 }
 
 type Destination struct {
@@ -178,6 +202,7 @@ type resolvedName struct {
 // Correlator is not safe for concurrent use; the daemon feeds it from one goroutine.
 type Correlator struct {
 	rules     *score.Rules
+	autoStart func(event.Event) *Session
 	processes map[uint32]*process
 	exits     []exitRecord
 	names     map[netip.Addr]resolvedName
@@ -191,6 +216,12 @@ func New(rules *score.Rules) *Correlator {
 		names:     map[netip.Addr]resolvedName{},
 		sessions:  map[string]*Session{},
 	}
+}
+
+// OnAutoSession sets the function that creates a session when a program from
+// the auto_sessions rule runs outside any session. It runs inside Handle.
+func (correlator *Correlator) OnAutoSession(start func(event.Event) *Session) {
+	correlator.autoStart = start
 }
 
 func (correlator *Correlator) StartSession(session *Session) {
@@ -217,18 +248,21 @@ func (correlator *Correlator) EndSession(id string) *Session {
 	return session
 }
 
-// Handle returns the flow for a connect event and any alerts the event raised.
-func (correlator *Correlator) Handle(evt event.Event) (*event.Flow, []event.Alert) {
+func (correlator *Correlator) Handle(evt event.Event) Result {
 	correlator.forgetExited(evt.Time)
+	result := Result{Ended: correlator.endFinishedAuto(evt.Time)}
 	switch evt.Kind {
 	case event.Fork:
 		correlator.fork(evt)
 	case event.Exec:
-		return nil, correlator.exec(evt)
+		result.Alerts = correlator.exec(evt)
 	case event.Exit:
 		if proc := correlator.processes[evt.PID]; proc != nil {
 			proc.exited = evt.Time
 			correlator.exits = append(correlator.exits, exitRecord{pid: evt.PID, proc: proc, at: evt.Time})
+			if proc.session != nil && proc.session.Auto && proc.session.RootPID == evt.PID {
+				proc.session.rootExited = evt.Time
+			}
 		}
 	case event.DNS:
 		correlator.learnName(evt)
@@ -237,11 +271,71 @@ func (correlator *Correlator) Handle(evt event.Event) (*event.Flow, []event.Aler
 			proc.session.evidenceFor(proc.pkg).addRead(evt.Path)
 		}
 	case event.Connect:
-		return correlator.connect(evt)
+		result.Flow, result.Alerts = correlator.connect(evt)
+		if result.Flow != nil && result.Flow.Verdict == policy.Blocked {
+			result.Kill = correlator.subtree(evt.PID)
+		}
 	case event.Health:
-		return nil, []event.Alert{{Time: evt.Time, Level: "health", Msg: evt.Msg}}
+		result.Alerts = []event.Alert{{Time: evt.Time, Level: "health", Msg: evt.Msg}}
 	}
-	return nil, nil
+	if result.Kill == nil && correlator.enforcedAlert(evt.PID, result.Alerts) {
+		result.Kill = correlator.subtree(evt.PID)
+	}
+	return result
+}
+
+func (correlator *Correlator) enforcedAlert(pid uint32, alerts []event.Alert) bool {
+	proc := correlator.processes[pid]
+	if proc == nil || proc.session == nil || proc.session.Enforce == "" || proc.session.Enforce == score.EnforceOff {
+		return false
+	}
+	for _, alert := range alerts {
+		if alert.Level == string(score.Alert) {
+			return true
+		}
+	}
+	return false
+}
+
+// subtree returns pid and every live descendant. A client-started session's
+// root is the contraband CLI itself and is never included.
+func (correlator *Correlator) subtree(pid uint32) []uint32 {
+	root := correlator.processes[pid]
+	if root == nil || root.session == nil {
+		return nil
+	}
+	var pids []uint32
+	for candidate, proc := range correlator.processes {
+		if !proc.exited.IsZero() || proc.session != root.session {
+			continue
+		}
+		if candidate == root.session.RootPID && !root.session.Auto {
+			continue
+		}
+		for ancestor, depth := candidate, 0; ancestor != 0 && depth < maxChainDepth; depth++ {
+			if ancestor == pid {
+				pids = append(pids, candidate)
+				break
+			}
+			next := correlator.processes[ancestor]
+			if next == nil {
+				break
+			}
+			ancestor = next.parentPID
+		}
+	}
+	slices.Sort(pids)
+	return pids
+}
+
+func (correlator *Correlator) endFinishedAuto(now time.Time) []*Session {
+	var ended []*Session
+	for id, session := range correlator.sessions {
+		if session.Auto && !session.rootExited.IsZero() && now.Sub(session.rootExited) >= autoEndDelay {
+			ended = append(ended, correlator.EndSession(id))
+		}
+	}
+	return ended
 }
 
 // forgetExited drops processes that exited more than exitRetention ago,
@@ -290,6 +384,17 @@ func (correlator *Correlator) exec(evt event.Event) []event.Alert {
 	}
 	if pkg := packageFromPath(evt.Cwd); pkg != "" {
 		proc.pkg = pkg
+	}
+	if correlator.autoStart != nil && correlator.rules.IsAutoSession(evt.Exe, evt.Args) {
+		if proc.session == nil {
+			if session := correlator.autoStart(evt); session != nil {
+				correlator.StartSession(session)
+			}
+		} else {
+			// Wrapping an install in a plain `contraband run` must not switch
+			// enforcement off.
+			proc.session.Enforce = score.Stronger(proc.session.Enforce, correlator.rules.EnforceAuto)
+		}
 	}
 	if proc.session == nil || proc.pkg == "" || !correlator.rules.IsDownloader(evt.Exe, evt.Args) {
 		return nil
@@ -354,6 +459,14 @@ func (correlator *Correlator) connect(evt event.Event) (*event.Flow, []event.Ale
 		evidence.addDestination(destination, "")
 		return flow, nil
 	}
+	if session.Enforce == score.EnforceStrict {
+		flow.Verdict = policy.Blocked
+		evidence.addDestination(destination, "blocked: not approved")
+		return flow, []event.Alert{{
+			Time: evt.Time, Session: session.ID, UID: session.UID, Package: proc.pkg, Level: string(score.Alert),
+			Msg: fmt.Sprintf("stopped %s: it connected to %s, which is not approved", path.Base(proc.exe), destination),
+		}}
+	}
 
 	var signals []score.Signal
 	var notes []string
@@ -371,7 +484,8 @@ func (correlator *Correlator) connect(evt event.Event) (*event.Flow, []event.Ale
 		signals = append(signals, score.SuspiciousDest)
 		notes = append(notes, "paste, webhook or tunnel service")
 	}
-	if previous, known := session.Baseline[proc.pkg]; known && !previous[destination] {
+	researching := session.Agent && proc.pkg == ""
+	if previous, known := session.Baseline[proc.pkg]; known && !previous[destination] && !researching {
 		signals = append(signals, score.NewBehavior)
 		notes = append(notes, "new since last run")
 	}

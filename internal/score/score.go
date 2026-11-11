@@ -79,6 +79,29 @@ type Rules struct {
 	SensitiveNames []string `yaml:"sensitive_names"`
 	Downloaders    []string `yaml:"downloaders"`
 	Shells         []string `yaml:"shells"`
+	AutoSessions   []string `yaml:"auto_sessions"`
+	Agents         []string `yaml:"agents"`
+	EnforceAuto    string   `yaml:"enforce_auto_sessions"`
+}
+
+const (
+	EnforceOff    = "off"
+	EnforceRisk   = "risk"
+	EnforceStrict = "strict"
+)
+
+// ValidEnforce reports whether mode is an enforcement mode; empty means off.
+func ValidEnforce(mode string) bool {
+	return mode == "" || mode == EnforceOff || mode == EnforceRisk || mode == EnforceStrict
+}
+
+// Stronger returns the stricter of two enforcement modes.
+func Stronger(first, second string) string {
+	rank := map[string]int{"": 0, EnforceOff: 0, EnforceRisk: 1, EnforceStrict: 2}
+	if rank[second] > rank[first] {
+		return second
+	}
+	return first
 }
 
 func DefaultRules() *Rules {
@@ -122,6 +145,11 @@ func LoadRules(extraPath string) (*Rules, error) {
 	rules.SensitiveNames = append(rules.SensitiveNames, extra.SensitiveNames...)
 	rules.Downloaders = append(rules.Downloaders, extra.Downloaders...)
 	rules.Shells = append(rules.Shells, extra.Shells...)
+	rules.AutoSessions = append(rules.AutoSessions, extra.AutoSessions...)
+	rules.Agents = append(rules.Agents, extra.Agents...)
+	if extra.EnforceAuto != "" {
+		rules.EnforceAuto = extra.EnforceAuto
+	}
 	return rules, nil
 }
 
@@ -136,6 +164,9 @@ func parseRules(content []byte) (*Rules, error) {
 		if _, err := path.Match(pattern, ""); err != nil {
 			return nil, fmt.Errorf("sensitive_names %q: %w", pattern, err)
 		}
+	}
+	if !ValidEnforce(rules.EnforceAuto) {
+		return nil, fmt.Errorf("enforce_auto_sessions %q: want off, risk or strict", rules.EnforceAuto)
 	}
 	return rules, nil
 }
@@ -174,6 +205,29 @@ func (rules *Rules) IsDownloader(exe string, args []string) bool {
 		invokedAs = path.Base(args[0])
 	}
 	return slices.Contains(rules.Shells, invokedAs) && slices.Contains(args, "-c")
+}
+
+// IsAutoSession reports whether a program should start a session by itself.
+func (rules *Rules) IsAutoSession(exe string, args []string) bool {
+	return invokedAs(rules.AutoSessions, exe, args)
+}
+
+func (rules *Rules) IsAgent(exe string, args []string) bool {
+	return invokedAs(rules.Agents, exe, args)
+}
+
+// invokedAs matches the executable and the first three argv entries, since
+// scripts run through an interpreter or env (npm is "env node .../npm").
+func invokedAs(list []string, exe string, args []string) bool {
+	if slices.Contains(list, path.Base(exe)) {
+		return true
+	}
+	for index := 0; index < len(args) && index < 3; index++ {
+		if slices.Contains(list, path.Base(args[index])) {
+			return true
+		}
+	}
+	return false
 }
 
 // matchDomain matches the domain itself or any subdomain of a listed entry.

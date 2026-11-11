@@ -66,6 +66,34 @@ inspect:      contraband show <session>
 if expected:  contraband allow -package evil 1.1.1.1
 ```
 
+### Automatic sessions
+
+You don't have to remember `contraband run`. When a listed program runs
+outside a session, the daemon starts one for it: package managers (npm, pip,
+cargo …), AI agents (claude, codex …) and runtimes (node, python), so a
+dependency that phones home while your app runs is covered too. Alerts from
+these sessions arrive as desktop notifications and in `contraband watch`.
+
+Inside one node or python process every package shares a pid, so runtime
+traffic is attributed to the app (command and directory), not to the package.
+
+### Enforcement
+
+Off by default. Opt in per run, or for automatic sessions in the rules file:
+
+| Mode | Stops a process when | Good for |
+|---|---|---|
+| `risk` | its session reaches ALERT, e.g. credentials read, then sent to a raw IP or paste site | AI agents: researching new sites is fine, exfiltration is not |
+| `strict` | it connects anywhere not approved, not a package registry and not local | installs and CI-like runs |
+
+```sh
+contraband run -enforce strict -- npm install
+```
+
+Only the offending process and its children are stopped; on macOS its first
+packet has already left by then. AI agents' own traffic is never compared with
+their previous run, since research differs every time.
+
 ### Detection rules
 
 Registries, suspicious domains and sensitive paths ship in

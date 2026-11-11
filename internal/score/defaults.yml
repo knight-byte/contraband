@@ -66,3 +66,40 @@ downloaders:
 shells:
   - bash
   - zsh
+
+# Programs that start a monitored session on their own, so installs, agents
+# and app runs are covered without typing `contraband run`. Matched on the
+# executable and on the names it was invoked as (npm runs as node).
+auto_sessions:
+  - npm
+  - npx
+  - pnpm
+  - yarn
+  - bun
+  - pip
+  - pip3
+  - uv
+  - cargo
+  - claude
+  - node
+  - python
+  - python3
+
+# AI agents fetch arbitrary pages while researching, so their own traffic is
+# not compared with the previous run; packages they install still are.
+agents:
+  - claude
+  - codex
+  - gemini
+  - aider
+  - cursor-agent
+
+# Enforcement for automatic sessions:
+#   off     monitor only
+#   risk    stop a process once its session reaches ALERT (e.g. credentials
+#           read, then sent to a raw IP); unknown domains are fine
+#   strict  stop any process that connects somewhere not approved, not a
+#           package registry and not local
+# Only settable here, in a root-owned file, so the code being watched cannot
+# turn it off.
+enforce_auto_sessions: off

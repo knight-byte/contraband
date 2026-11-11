@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -50,9 +51,11 @@ type Daemon struct {
 	mu         sync.Mutex
 	correlator *correlate.Correlator
 	sessions   map[string]openSession
-	policies   policyStore
-	approvals  *limiter
-	hub        hub
+	// autoSessions is touched only by the consume goroutine.
+	autoSessions map[string]bool
+	policies     policyStore
+	approvals    *limiter
+	hub          hub
 	// Timestamps, in unix nanoseconds, of the newest process and network
 	// events handled. Sensors may deliver the two kinds through separate
 	// pipelines with different delays.
@@ -87,7 +90,7 @@ func Run(ctx context.Context, config Config) error {
 	}
 
 	daemon := &Daemon{
-		config: config, store: db, correlator: correlate.New(config.Rules), sessions: map[string]openSession{},
+		config: config, store: db, correlator: correlate.New(config.Rules), sessions: map[string]openSession{}, autoSessions: map[string]bool{},
 		policies: policyStore{dir: filepath.Join(filepath.Dir(config.DB), "policies")}, approvals: newLimiter(), hub: newHub(),
 	}
 
@@ -112,6 +115,7 @@ func Run(ctx context.Context, config Config) error {
 		}
 	}()
 	go func() { errs <- server.Serve(listener) }()
+	daemon.correlator.OnAutoSession(func(evt event.Event) *correlate.Session { return daemon.startAuto(ctx, evt) })
 	go daemon.consume(ctx, events)
 
 	config.Log.Info("daemon started", "socket", config.Socket, "db", config.DB)
@@ -158,8 +162,13 @@ func (daemon *Daemon) consume(ctx context.Context, events <-chan event.Event) {
 		case evt := <-events:
 			daemon.config.Log.Debug("sensor event", "event", evt)
 			daemon.mu.Lock()
-			flow, alerts := daemon.correlator.Handle(evt)
+			result := daemon.correlator.Handle(evt)
 			daemon.mu.Unlock()
+			daemon.kill(result.Kill)
+			for _, ended := range result.Ended {
+				daemon.finishAuto(ctx, ended)
+			}
+			flow, alerts := result.Flow, result.Alerts
 			if evt.Kind == event.Connect || evt.Kind == event.DNS {
 				daemon.latestNetwork.Store(evt.Time.UnixNano())
 			} else {
@@ -174,6 +183,9 @@ func (daemon *Daemon) consume(ctx context.Context, events <-chan event.Event) {
 					kind = store.KindHealth
 				}
 				daemon.record(ctx, kind, alerts[index].Session, Message{Alert: &alerts[index]})
+				if daemon.autoSessions[alerts[index].Session] && kind == store.KindAlert {
+					daemon.notify(ctx, alerts[index].UID, "Contraband: "+strings.ToUpper(alerts[index].Level), alerts[index].Msg)
+				}
 			}
 		}
 	}
@@ -196,6 +208,7 @@ type StartRequest struct {
 	Command string `json:"command"`
 	Cwd     string `json:"cwd"`
 	Policy  []byte `json:"policy,omitempty"`
+	Enforce string `json:"enforce,omitempty"`
 }
 
 type StartResponse struct {
@@ -231,6 +244,8 @@ type policyApproval struct {
 
 type EndRequest struct {
 	PolicyHash string `json:"policy_hash"`
+	Auto       bool   `json:"auto,omitempty"`
+	Enforce    string `json:"enforce,omitempty"`
 }
 
 type EndResponse struct {
@@ -250,6 +265,8 @@ type sessionStart struct {
 	Command    string `json:"command"`
 	Cwd        string `json:"cwd"`
 	PolicyHash string `json:"policy_hash"`
+	Auto       bool   `json:"auto,omitempty"`
+	Enforce    string `json:"enforce,omitempty"`
 }
 
 func (daemon *Daemon) routes() http.Handler {
@@ -276,6 +293,10 @@ func (daemon *Daemon) startSession(writer http.ResponseWriter, request *http.Req
 		httpError(writer, http.StatusBadRequest, err)
 		return
 	}
+	if !score.ValidEnforce(body.Enforce) {
+		httpError(writer, http.StatusBadRequest, errors.New("enforce: want risk or strict"))
+		return
+	}
 	approved, approvedContent, err := daemon.policies.approved(caller.UID, body.Cwd)
 	if err != nil {
 		httpError(writer, http.StatusInternalServerError, err)
@@ -296,7 +317,7 @@ func (daemon *Daemon) startSession(writer http.ResponseWriter, request *http.Req
 		httpError(writer, http.StatusInternalServerError, err)
 		return
 	}
-	start := sessionStart{ID: id, UID: caller.UID, RootPID: caller.PID, Command: body.Command, Cwd: body.Cwd, PolicyHash: approved.Hash}
+	start := sessionStart{ID: id, UID: caller.UID, RootPID: caller.PID, Command: body.Command, Cwd: body.Cwd, PolicyHash: approved.Hash, Enforce: body.Enforce}
 	if err := daemon.store.Append(ctx, store.KindSessionStart, id, start); err != nil {
 		httpError(writer, http.StatusInternalServerError, err)
 		return
@@ -306,7 +327,8 @@ func (daemon *Daemon) startSession(writer http.ResponseWriter, request *http.Req
 	daemon.sessions[id] = openSession{uid: caller.UID, proposalHash: policy.Hash(body.Policy)}
 	daemon.correlator.StartSession(&correlate.Session{
 		ID: id, RootPID: caller.PID, UID: caller.UID, Command: body.Command, Cwd: body.Cwd,
-		Policy: approved, Baseline: baseline,
+		Policy: approved, Baseline: baseline, Enforce: body.Enforce,
+		Agent: daemon.config.Rules.IsAgent(commandName(body.Command), nil),
 	})
 	daemon.mu.Unlock()
 	pending := len(body.Policy) > 0 && policy.Hash(body.Policy) != policy.Hash(approvedContent)
