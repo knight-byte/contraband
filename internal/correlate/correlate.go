@@ -530,18 +530,34 @@ func isLocal(addr netip.Addr) bool {
 	return addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast() || addr.IsUnspecified()
 }
 
-// packageFromPath maps an install script's working directory to its package,
-// e.g. /app/node_modules/@scope/name/lib → @scope/name. Only the npm layout is
-// recognised; other ecosystems fall back to the session command.
+// packageFromPath maps an install script's working directory to its package:
+//
+//	/app/node_modules/@scope/name/lib            → @scope/name   (npm)
+//	/tmp/pip-install-x8k2/requests_0a1b…/         → requests      (pip)
+//	/opt/homebrew/Cellar/wget/1.25.0/             → wget          (Homebrew)
+//
+// Other layouts fall back to the session command.
 func packageFromPath(cwd string) string {
-	const marker = "/node_modules/"
-	index := strings.LastIndex(cwd, marker)
-	if index < 0 {
+	if index := strings.LastIndex(cwd, "/node_modules/"); index >= 0 {
+		parts := strings.SplitN(cwd[index+len("/node_modules/"):], "/", 3)
+		if strings.HasPrefix(parts[0], "@") && len(parts) > 1 {
+			return parts[0] + "/" + parts[1]
+		}
+		return parts[0]
+	}
+	if index := strings.Index(cwd, "/pip-install-"); index >= 0 {
+		parts := strings.SplitN(cwd[index+1:], "/", 3)
+		if len(parts) > 1 {
+			// pip names build dirs <name>_<32 hex digits>.
+			if cut := strings.LastIndex(parts[1], "_"); cut > 0 && len(parts[1])-cut-1 == 32 {
+				return parts[1][:cut]
+			}
+		}
 		return ""
 	}
-	parts := strings.SplitN(cwd[index+len(marker):], "/", 3)
-	if strings.HasPrefix(parts[0], "@") && len(parts) > 1 {
-		return parts[0] + "/" + parts[1]
+	if index := strings.Index(cwd, "/Cellar/"); index >= 0 {
+		name, _, _ := strings.Cut(cwd[index+len("/Cellar/"):], "/")
+		return name
 	}
-	return parts[0]
+	return ""
 }

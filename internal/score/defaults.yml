@@ -13,6 +13,12 @@ registries:
   - static.crates.io
   - index.crates.io
   - rubygems.org
+  - index.rubygems.org
+  - formulae.brew.sh
+  - ghcr.io
+  - pkg-containers.githubusercontent.com
+  - repo.packagist.org
+  - packagist.org
 
 suspicious_domains:
   - pastebin.com
@@ -80,6 +86,11 @@ auto_sessions:
   - pip3
   - uv
   - cargo
+  - brew
+  - gem
+  - bundle
+  - composer
+  - go
   - claude
   - node
   - python
