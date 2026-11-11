@@ -1,0 +1,68 @@
+# Built-in detection lists. Extend them without rebuilding through the
+# root-owned rules file passed to the daemon with -rules.
+
+registries:
+  - registry.npmjs.org
+  - registry.yarnpkg.com
+  - npm.pkg.github.com
+  - pypi.org
+  - files.pythonhosted.org
+  - proxy.golang.org
+  - sum.golang.org
+  - crates.io
+  - static.crates.io
+  - index.crates.io
+  - rubygems.org
+
+suspicious_domains:
+  - pastebin.com
+  - paste.ee
+  - hastebin.com
+  - ghostbin.com
+  - transfer.sh
+  - discord.com
+  - discordapp.com
+  - api.telegram.org
+  - ngrok.io
+  - ngrok-free.app
+  - ngrok.app
+  - trycloudflare.com
+  - loca.lt
+  - serveo.net
+  - webhook.site
+  - pipedream.net
+  - requestbin.net
+  - interact.sh
+  - oast.fun
+
+sensitive_paths:
+  - /.ssh/
+  - /.aws/
+  - /.azure/
+  - /.config/gcloud/
+  - /.config/gh/
+  - /.docker/config.json
+  - /.kube/config
+  - /.gnupg/
+  - /.npmrc
+  - /.pypirc
+  - /.netrc
+  - /.git-credentials
+  - /Library/Keychains/
+
+sensitive_names:
+  - .env
+  - .env.*
+  - id_rsa*
+  - id_ed25519*
+  - "*.pem"
+
+downloaders:
+  - curl
+  - wget
+  - powershell
+  - pwsh
+
+shells:
+  - bash
+  - zsh
