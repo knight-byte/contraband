@@ -1,0 +1,22 @@
+# Linux sensor development VM: Ubuntu 24.04 (kernel 6.8, BTF enabled).
+# Started by `make vm`, which mounts the repository at /src.
+minimumLimaVersion: "1.0.0"
+images:
+  - location: "https://cloud-images.ubuntu.com/releases/noble/release/ubuntu-24.04-server-cloudimg-arm64.img"
+    arch: "aarch64"
+  - location: "https://cloud-images.ubuntu.com/releases/noble/release/ubuntu-24.04-server-cloudimg-amd64.img"
+    arch: "x86_64"
+cpus: 4
+memory: "4GiB"
+provision:
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -euo pipefail
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y --no-install-recommends clang llvm libbpf-dev linux-tools-common "linux-tools-$(uname -r)" make curl ca-certificates git
+      arch=$(dpkg --print-architecture)
+      curl -fsSL "https://go.dev/dl/go1.27.3.linux-${arch}.tar.gz" | tar -C /usr/local -xz
+      ln -sf /usr/local/go/bin/go /usr/local/bin/go
+      ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt
